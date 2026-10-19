@@ -2,6 +2,16 @@
 
 Chistara is a lightweight, privacy-first music player and internet FM radio designed for Windows 11. Its layout follows the supplied blank canvas: restrained near-black layers, a compact header, contextual left rail, persistent transport bar, subtle edge accents, and a native Acrylic backdrop. Its official icon pairs a rounded deep-navy tile with cyan-to-violet equalizer bars and a crisp white music note, matching the supplied artwork exactly.
 
+## Screenshots 
+
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184658" src="https://github.com/user-attachments/assets/434b4bda-94c5-47d1-93d8-80b7e5612490" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184644" src="https://github.com/user-attachments/assets/cb711bc1-d2d4-4629-bcc5-c7cbef070ae9" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184628" src="https://github.com/user-attachments/assets/89993248-83d5-4e60-a2a5-2f138d3a62d1" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184621" src="https://github.com/user-attachments/assets/e7b4b3b7-cca0-4893-af92-ab1edf34f0b3" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184613" src="https://github.com/user-attachments/assets/37928167-7d0a-4e11-a7ad-e430516329ab" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184600" src="https://github.com/user-attachments/assets/2f367434-f594-4153-ae08-12ba574043ba" />
+
+
 This repository contains the stable **Chistara 1.0.0** release by **Mr KNIGHT**.
 
 ## Ready-to-run build
