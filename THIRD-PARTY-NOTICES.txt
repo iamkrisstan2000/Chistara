@@ -1,0 +1,68 @@
+CHISTARA — THIRD-PARTY NOTICES
+
+Chistara uses the following unmodified libraries from NuGet.
+
+1. NAudio 2.2.1
+   Copyright © Mark Heath and contributors
+   Project: https://github.com/naudio/NAudio
+   License: MIT
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+   THE SOFTWARE.
+
+2. TagLibSharp 2.3.0
+   Copyright © Brian Nickel, Gabriel Burt, Stephen Shaw, and contributors
+   Project: https://github.com/mono/taglib-sharp
+   License: GNU Lesser General Public License 2.1 only (LGPL-2.1-only)
+   License text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
+
+   TagLibSharp is used for read-only media metadata extraction. Chistara project
+   source and its exact NuGet dependency declaration are supplied with this
+   build so recipients can inspect, rebuild, or replace the library.
+
+3. Radio Browser
+   Project: https://www.radio-browser.info/
+
+   The optional online radio directory is queried at runtime. Radio Browser is
+   not bundled with Chistara. Stream names, URLs, optional favicon/logo links,
+   codecs, and availability are supplied by the service and broadcasters.
+
+4. MusicBrainz
+   Project: https://musicbrainz.org/
+   Data licensing: https://musicbrainz.org/doc/About/Data_License
+
+   MusicBrainz is queried at runtime only to match missing album artwork.
+   MusicBrainz software and databases are not bundled with Chistara.
+
+5. Cover Art Archive
+   Project: https://coverartarchive.org/
+
+   Available release images are retrieved at runtime and cached for local
+   artwork display. The service is not bundled with Chistara. Copyright and
+   other rights in individual images remain with their respective owners.
+
+6. IPWhoIs
+   Project: https://ipwhois.io/ and https://ipwho.is/
+
+   The keyless HTTPS endpoint is queried to resolve approximate location for
+   Local FM. Chistara stores city, region, country code, coordinates, and cache
+   time only; it does not persist the returned IP address.
+
+Windows, Windows 11, Fluent, and Segoe are trademarks of Microsoft Corporation.
+Chistara is not affiliated with or endorsed by Microsoft, Radio Browser,
+MetaBrainz, the Cover Art Archive, or IPWhoIs.
