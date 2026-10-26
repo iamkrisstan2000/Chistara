@@ -7,6 +7,17 @@
 
 Chistara is a lightweight, privacy-friendly music player and worldwide internet FM radio for Windows 11. It combines a Fluent Acrylic interface, local music playback, public radio discovery, artwork, sound effects, and live audio visualizers in one portable app.
 
+## Screenshots 
+
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184658" src="https://github.com/user-attachments/assets/ec6a12e9-5e99-4ba7-a33a-437e80f9c1e1" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184644" src="https://github.com/user-attachments/assets/22a63817-b22d-46d0-96a8-e5f295a04680" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184628" src="https://github.com/user-attachments/assets/067e1467-9a3a-4042-9664-438bf1243058" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184621" src="https://github.com/user-attachments/assets/eebece91-a585-4a1b-908d-d4208362f700" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184613" src="https://github.com/user-attachments/assets/d0faa08f-59b3-4afb-9e51-e0b0c5eeecfd" />
+<img width="1919" height="1079" alt="Screenshot 2026-10-19 184600" src="https://github.com/user-attachments/assets/6902e631-d5bb-417e-9dfe-969376359870" />
+
+
+
 ## Download
 
 Download `Chistara.exe` from the GitHub **Releases** page. It is a self-contained Windows x64 executable: no installer, administrator access, or separate .NET installation is required.
