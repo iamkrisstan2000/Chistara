@@ -2,7 +2,7 @@
 
 ## Supported version
 
-Security fixes are provided for the latest published Chistara release. The current supported line is **1.0.x**.
+Security fixes are provided for the latest published Chistara release. The current supported line is **1.1.x**.
 
 ## Reporting a vulnerability
 

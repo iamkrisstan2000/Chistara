@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 
 namespace Chistara.Services;
 
@@ -19,16 +20,17 @@ public static class WindowBoundsService
         if (!OperatingSystem.IsWindows()) return;
         var handle = new WindowInteropHelper(window).Handle;
         if (handle == IntPtr.Zero || HwndSource.FromHwnd(handle) is not { } source) return;
-        source.AddHook(WindowMessageHook);
+
+        HwndSourceHook hook = (IntPtr hwnd, int message, IntPtr _, IntPtr lParam, ref bool handled) =>
+        {
+            if (message == WmGetMinMaxInfo && ApplyWorkingArea(window, hwnd, lParam)) handled = true;
+            return IntPtr.Zero;
+        };
+        source.AddHook(hook);
+        window.Closed += (_, _) => source.RemoveHook(hook);
     }
 
-    private static IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        if (message == WmGetMinMaxInfo && ApplyWorkingArea(hwnd, lParam)) handled = true;
-        return IntPtr.Zero;
-    }
-
-    private static bool ApplyWorkingArea(IntPtr hwnd, IntPtr lParam)
+    private static bool ApplyWorkingArea(Window window, IntPtr hwnd, IntPtr lParam)
     {
         if (lParam == IntPtr.Zero) return false;
         var monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
@@ -51,6 +53,13 @@ public static class WindowBoundsService
         minMax.MaxSize.Y = height;
         minMax.MaxTrackSize.X = width;
         minMax.MaxTrackSize.Y = height;
+
+        // Handling WM_GETMINMAXINFO ourselves bypasses WPF's normal MinWidth/
+        // MinHeight contribution. Reapply those values in physical pixels so the
+        // custom frame can never collapse to a title-bar-sized strip.
+        var dpi = VisualTreeHelper.GetDpi(window);
+        minMax.MinTrackSize.X = Math.Min(width, Math.Max(1, (int)Math.Ceiling(window.MinWidth * dpi.DpiScaleX)));
+        minMax.MinTrackSize.Y = Math.Min(height, Math.Max(1, (int)Math.Ceiling(window.MinHeight * dpi.DpiScaleY)));
         Marshal.StructureToPtr(minMax, lParam, false);
         return true;
     }

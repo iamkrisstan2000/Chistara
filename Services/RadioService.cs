@@ -30,7 +30,7 @@ public sealed class RadioService : IDisposable
             BaseAddress = new Uri("https://all.api.radio-browser.info/"),
             Timeout = TimeSpan.FromSeconds(35)
         };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Chistara/1.0.0 (Windows 11 music and radio player)");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Chistara/1.1.0 (Windows 11 music and radio player)");
     }
 
     public string LocalCountryCode => !string.IsNullOrWhiteSpace(_lastLocation?.CountryCode)

@@ -102,6 +102,7 @@
                 <ComboBoxItem Content="Modern Waves" Tag="ModernWaves"/>
                 <ComboBoxItem Content="Topographic" Tag="Topographic"/>
                 <ComboBoxItem Content="Simple Spectrum" Tag="SimpleSpectrum"/>
+                <ComboBoxItem Content="CD Days" Tag="CdDays"/>
             </ComboBox>
         </Grid>
     </Border>

@@ -16,6 +16,7 @@ public sealed class TrackItem : INotifyPropertyChanged
     public string Album { get; set; } = string.Empty;
     public string Genre { get; set; } = string.Empty;
     public TimeSpan Duration { get; set; }
+    public DateTime DateAddedUtc { get; set; }
     public DateTime ModifiedUtc { get; set; }
     public string Source { get; set; } = "Library";
     public string ArtworkPath
@@ -89,6 +90,7 @@ public sealed class RecentPlay
     public string Artist { get; set; } = string.Empty;
     public string Album { get; set; } = string.Empty;
     public string ArtworkPath { get; set; } = string.Empty;
+    public string SourceId { get; set; } = string.Empty;
     public long DurationTicks { get; set; }
     public DateTimeOffset PlayedAt { get; set; } = DateTimeOffset.Now;
 
@@ -228,6 +230,9 @@ public sealed class ScanProgress
 
 public sealed class RadioStation
 {
+    private string _lastChangeTimeIso8601 = string.Empty;
+    private DateTimeOffset _directoryDateAdded = DateTimeOffset.MinValue;
+
     [JsonPropertyName("stationuuid")] public string Id { get; set; } = string.Empty;
     [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
     [JsonPropertyName("url")] public string Url { get; set; } = string.Empty;
@@ -244,10 +249,27 @@ public sealed class RadioStation
     [JsonPropertyName("votes")] public int Votes { get; set; }
     [JsonPropertyName("clickcount")] public int ClickCount { get; set; }
     [JsonPropertyName("lastcheckok")] public int LastCheckOk { get; set; }
+    [JsonPropertyName("lastchangetime_iso8601")]
+    public string LastChangeTimeIso8601
+    {
+        get => _lastChangeTimeIso8601;
+        set
+        {
+            _lastChangeTimeIso8601 = value ?? string.Empty;
+            _directoryDateAdded = DateTimeOffset.TryParse(
+                _lastChangeTimeIso8601,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed)
+                    ? parsed
+                    : DateTimeOffset.MinValue;
+        }
+    }
     [JsonPropertyName("geo_lat")] public double? GeoLatitude { get; set; }
     [JsonPropertyName("geo_long")] public double? GeoLongitude { get; set; }
 
     [JsonIgnore] public double? DistanceKm { get; set; }
+    [JsonIgnore] public DateTimeOffset DirectoryDateAdded => _directoryDateAdded;
     [JsonIgnore] public string Initials => TrackItem.InitialsFrom(Name);
     [JsonIgnore] public string StreamUrl => string.IsNullOrWhiteSpace(UrlResolved) ? Url : UrlResolved;
     [JsonIgnore] public string LocationText => string.Join(" · ", new[] { DistanceKm is >= 0 ? $"{DistanceKm:0.#} km away" : null, State, Country }.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct(StringComparer.CurrentCultureIgnoreCase));
@@ -304,6 +326,8 @@ public sealed class AppSettings
     public string StreamQuality { get; set; } = "Balanced";
     public bool LiteMode { get; set; }
     public string VisualizerStyle { get; set; } = "Waves";
+    public string MusicSortOrder { get; set; } = "Alphabetical";
+    public string RadioSortOrder { get; set; } = "Alphabetical";
     public double Volume { get; set; } = 0.72;
     public string LastSection { get; set; } = "Home";
     public List<RecentPlay> RecentPlays { get; set; } = [];

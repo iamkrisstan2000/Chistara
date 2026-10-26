@@ -24,6 +24,16 @@ public partial class MainWindow : Window
     public BulkObservableCollection<RadioStation> HomeWorldwideStations { get; } = [];
     public BulkObservableCollection<SearchResult> SearchResults { get; } = [];
 
+    private static readonly (string Prefix, SearchScope Scope)[] SearchPrefixes =
+    [
+        ("artist:", SearchScope.Artist),
+        ("album:", SearchScope.Album),
+        ("music:", SearchScope.Music),
+        ("song:", SearchScope.Song),
+        ("radio:", SearchScope.Radio),
+        ("fm:", SearchScope.Radio)
+    ];
+
     private AppSettings _settings = AppStorage.LoadSettings();
     private readonly RadioService _radioService = new();
     private readonly ArtworkService _artworkService = new();
@@ -31,6 +41,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _playbackTimer;
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _toastTimer;
+    private readonly DispatcherTimer _localSearchDebounceTimer;
     private readonly DispatcherTimer _searchDebounceTimer;
 
     private CancellationTokenSource? _libraryCancellation;
@@ -42,6 +53,8 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _homeRecommendationsCancellation;
     private List<TrackItem> _allTracks = [];
     private List<TrackItem> _deviceTracks = [];
+    private List<MusicSearchGroup> _artistSearchGroups = [];
+    private List<MusicSearchGroup> _albumSearchGroups = [];
     private List<TrackItem> _orderedQueue = [];
     private List<TrackItem> _queue = [];
     private List<RadioStation> _allStations = [];
@@ -53,6 +66,7 @@ public partial class MainWindow : Window
     private string _musicMode = "songs";
     private string _radioMode = "local";
     private string _settingsDestination = "visual";
+    private LibraryGroup? _activeLibraryGroup;
     private TrackItem? _currentTrack;
     private RadioStation? _currentStation;
     private Uri? _currentRadioUri;
@@ -78,7 +92,12 @@ public partial class MainWindow : Window
 
     private enum SearchScope { All, Music, Song, Artist, Album, Radio }
     private enum MusicRepeatMode { Off, All, One }
+    private sealed record MusicSearchGroup(string Name, string LeadArtist, int Count, TrackItem ArtworkTrack);
     private readonly record struct ParsedSearch(string Term, SearchScope Scope);
+    private readonly record struct RankedSearchItem<T>(T Item, int Score);
+    private readonly record struct RadioRecentIndex(
+        Dictionary<string, DateTimeOffset> Sources,
+        Dictionary<string, DateTimeOffset> Names);
 
     public MainWindow()
     {
@@ -133,7 +152,9 @@ public partial class MainWindow : Window
             Toast.Visibility = Visibility.Collapsed;
         };
 
-        _searchDebounceTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(420) };
+        _localSearchDebounceTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(110) };
+        _localSearchDebounceTimer.Tick += LocalSearchDebounceTimer_Tick;
+        _searchDebounceTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(420) };
         _searchDebounceTimer.Tick += SearchDebounceTimer_Tick;
         GlobalSearchShell.SizeChanged += (_, _) => SearchPopupBorder.Width = Math.Max(360, GlobalSearchShell.ActualWidth);
 
@@ -178,6 +199,7 @@ public partial class MainWindow : Window
         _playCancellation?.Cancel();
         _searchRadioCancellation?.Cancel();
         _homeRecommendationsCancellation?.Cancel();
+        _localSearchDebounceTimer.Stop();
         _searchDebounceTimer.Stop();
         try { RadioMedia.Stop(); } catch { }
         _audio.Dispose();
@@ -451,6 +473,7 @@ public partial class MainWindow : Window
         ClearSearchButton.Visibility = hasQuery ? Visibility.Visible : Visibility.Collapsed;
         if (_initializing) return;
 
+        _localSearchDebounceTimer.Stop();
         _searchDebounceTimer.Stop();
         var parsed = ParseSearch(GlobalSearchBox.Text);
         if (!parsed.Term.Equals(_lastStationSearchQuery, StringComparison.OrdinalIgnoreCase))
@@ -460,8 +483,10 @@ public partial class MainWindow : Window
             _searchStationsLoaded = false;
             _searchStationsLoading = false;
         }
-        UpdateCurrentPageForSearch();
-        BuildUnifiedSearchResults();
+        if (string.IsNullOrWhiteSpace(parsed.Term))
+            RunLocalSearch();
+        else
+            _localSearchDebounceTimer.Start();
         if (parsed.Term.Length >= 2 && !_searchStationsLoaded)
         {
             SearchFooterText.Text = _searchStationsLoading ? "Searching the FM directory…" : "Music results are instant · FM results are loading…";
@@ -473,8 +498,26 @@ public partial class MainWindow : Window
         }
     }
 
+    private void LocalSearchDebounceTimer_Tick(object? sender, EventArgs e)
+    {
+        _localSearchDebounceTimer.Stop();
+        RunLocalSearch();
+    }
+
+    private void RunLocalSearch()
+    {
+        UpdateCurrentPageForSearch();
+        BuildUnifiedSearchResults();
+    }
+
     private void GlobalSearchBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if ((e.Key is Key.Enter or Key.Down) && _localSearchDebounceTimer.IsEnabled)
+        {
+            _localSearchDebounceTimer.Stop();
+            RunLocalSearch();
+        }
+
         if (e.Key == Key.Escape)
         {
             ClearUnifiedSearch(keepFocus: true);
@@ -524,6 +567,7 @@ public partial class MainWindow : Window
 
     private void ClearUnifiedSearch(bool keepFocus)
     {
+        _localSearchDebounceTimer.Stop();
         _searchDebounceTimer.Stop();
         GlobalSearchPopup.IsOpen = false;
         GlobalSearchBox.Clear();
@@ -560,7 +604,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        var results = new List<SearchResult>();
+        var matcher = new SearchMatcher(parsed.Term);
+        var results = new List<SearchResult>(24);
         var includeTracks = parsed.Scope is SearchScope.All or SearchScope.Music or SearchScope.Song;
         var includeArtists = parsed.Scope is SearchScope.All or SearchScope.Music or SearchScope.Artist;
         var includeAlbums = parsed.Scope is SearchScope.All or SearchScope.Music or SearchScope.Album;
@@ -569,111 +614,101 @@ public partial class MainWindow : Window
 
         if (includeTracks)
         {
-            results.AddRange(_allTracks
-                .Select(track => new
-                {
-                    Track = track,
-                    Score = MatchScore(parsed.Term,
-                        (track.DisplayTitle, 28),
-                        (track.DisplayArtist, 18),
-                        (track.DisplayAlbum, 12),
-                        (track.Genre, 4))
-                })
-                .Where(item => item.Score > 0)
-                .OrderByDescending(item => item.Score)
-                .ThenBy(item => item.Track.DisplayTitle, StringComparer.CurrentCultureIgnoreCase)
-                .Take(perCategory)
-                .Select(item => new SearchResult
-                {
-                    Kind = "Song",
-                    Title = item.Track.DisplayTitle,
-                    Subtitle = $"{item.Track.DisplayArtist} · {item.Track.DisplayAlbum}",
-                    Icon = "\uE8D6",
-                    ArtworkSource = item.Track.ArtworkPath,
-                    Key = item.Track.Path,
-                    Score = item.Score,
-                    Track = item.Track
-                }));
+            var matches = FindBestMatches(
+                _allTracks,
+                track => matcher.Score(
+                    track.DisplayTitle, 28,
+                    track.DisplayArtist, 18,
+                    track.DisplayAlbum, 12,
+                    track.Genre, 4),
+                static (left, right) => StringComparer.CurrentCultureIgnoreCase.Compare(left.DisplayTitle, right.DisplayTitle),
+                perCategory);
+            results.AddRange(matches.Select(item => new SearchResult
+            {
+                Kind = "Song",
+                Title = item.Item.DisplayTitle,
+                Subtitle = $"{item.Item.DisplayArtist} · {item.Item.DisplayAlbum}",
+                Icon = "\uE8D6",
+                ArtworkSource = item.Item.ArtworkPath,
+                Key = item.Item.Path,
+                Score = item.Score,
+                Track = item.Item
+            }));
         }
 
         if (includeArtists)
         {
-            results.AddRange(_allTracks
-                .GroupBy(track => track.DisplayArtist, StringComparer.CurrentCultureIgnoreCase)
-                .Select(group => new { Group = group, Score = MatchScore(parsed.Term, (group.Key, 24)) })
-                .Where(item => item.Score > 0)
-                .OrderByDescending(item => item.Score)
-                .ThenBy(item => item.Group.Key, StringComparer.CurrentCultureIgnoreCase)
-                .Take(parsed.Scope == SearchScope.Artist ? 12 : 3)
-                .Select(item => new SearchResult
-                {
-                    Kind = "Artist",
-                    Title = item.Group.Key,
-                    Subtitle = $"{item.Group.Count():N0} {(item.Group.Count() == 1 ? "song" : "songs")}",
-                    Icon = "\uE77B",
-                    ArtworkSource = item.Group.Select(track => track.ArtworkPath).FirstOrDefault(path => !string.IsNullOrWhiteSpace(path)) ?? string.Empty,
-                    Key = item.Group.Key,
-                    Score = item.Score
-                }));
+            var limit = parsed.Scope == SearchScope.Artist ? 12 : 3;
+            var matches = FindBestMatches(
+                _artistSearchGroups,
+                group => matcher.Score(group.Name, 24),
+                static (left, right) => StringComparer.CurrentCultureIgnoreCase.Compare(left.Name, right.Name),
+                limit);
+            results.AddRange(matches.Select(item => new SearchResult
+            {
+                Kind = "Artist",
+                Title = item.Item.Name,
+                Subtitle = $"{item.Item.Count:N0} {(item.Item.Count == 1 ? "song" : "songs")}",
+                Icon = "\uE77B",
+                ArtworkSource = item.Item.ArtworkTrack.ArtworkPath,
+                Key = item.Item.Name,
+                Score = item.Score
+            }));
         }
 
         if (includeAlbums)
         {
-            results.AddRange(_allTracks
-                .GroupBy(track => track.DisplayAlbum, StringComparer.CurrentCultureIgnoreCase)
-                .Select(group => new
-                {
-                    Group = group,
-                    Score = MatchScore(parsed.Term, (group.Key, 24), (group.First().DisplayArtist, 8))
-                })
-                .Where(item => item.Score > 0)
-                .OrderByDescending(item => item.Score)
-                .ThenBy(item => item.Group.Key, StringComparer.CurrentCultureIgnoreCase)
-                .Take(parsed.Scope == SearchScope.Album ? 12 : 3)
-                .Select(item => new SearchResult
-                {
-                    Kind = "Album",
-                    Title = item.Group.Key,
-                    Subtitle = $"{item.Group.First().DisplayArtist} · {item.Group.Count():N0} {(item.Group.Count() == 1 ? "song" : "songs")}",
-                    Icon = "\uE93C",
-                    ArtworkSource = item.Group.Select(track => track.ArtworkPath).FirstOrDefault(path => !string.IsNullOrWhiteSpace(path)) ?? string.Empty,
-                    Key = item.Group.Key,
-                    Score = item.Score
-                }));
+            var limit = parsed.Scope == SearchScope.Album ? 12 : 3;
+            var matches = FindBestMatches(
+                _albumSearchGroups,
+                group => matcher.Score(group.Name, 24, group.LeadArtist, 8),
+                static (left, right) => StringComparer.CurrentCultureIgnoreCase.Compare(left.Name, right.Name),
+                limit);
+            results.AddRange(matches.Select(item => new SearchResult
+            {
+                Kind = "Album",
+                Title = item.Item.Name,
+                Subtitle = $"{item.Item.LeadArtist} · {item.Item.Count:N0} {(item.Item.Count == 1 ? "song" : "songs")}",
+                Icon = "\uE93C",
+                ArtworkSource = item.Item.ArtworkTrack.ArtworkPath,
+                Key = item.Item.Name,
+                Score = item.Score
+            }));
         }
 
         if (includeRadio)
         {
-            var stations = _allStations.Concat(_searchStations)
-                .Where(station => !string.IsNullOrWhiteSpace(station.Name))
-                .GroupBy(station => string.IsNullOrWhiteSpace(station.Id) ? station.StreamUrl : station.Id, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First());
-            results.AddRange(stations
-                .Select(station => new
-                {
-                    Station = station,
-                    Score = MatchScore(parsed.Term,
-                        (station.Name, 28),
-                        (station.Country, 14),
-                        (station.State, 12),
-                        (station.Tags, 10),
-                        (station.Language, 6))
-                })
-                .Where(item => item.Score > 0)
-                .OrderByDescending(item => item.Score)
-                .ThenByDescending(item => item.Station.ClickCount)
-                .Take(parsed.Scope == SearchScope.Radio ? 14 : 7)
-                .Select(item => new SearchResult
-                {
-                    Kind = "FM",
-                    Title = item.Station.Name,
-                    Subtitle = JoinSearchDetail(item.Station.LocationText, item.Station.TechnicalText),
-                    Icon = "\uE720",
-                    ArtworkSource = item.Station.Favicon,
-                    Key = item.Station.Id,
-                    Score = item.Score,
-                    Station = item.Station
-                }));
+            var limit = parsed.Scope == SearchScope.Radio ? 14 : 7;
+            var matches = FindBestMatches(
+                    _allStations.Concat(_searchStations).Where(station => !string.IsNullOrWhiteSpace(station.Name)),
+                    station => matcher.Score(
+                        station.Name, 28,
+                        station.Country, 14,
+                        station.State, 12,
+                        station.Tags, 10,
+                        station.Language, 6),
+                    static (left, right) =>
+                    {
+                        var clickOrder = right.ClickCount.CompareTo(left.ClickCount);
+                        return clickOrder != 0
+                            ? clickOrder
+                            : StringComparer.CurrentCultureIgnoreCase.Compare(left.Name, right.Name);
+                    },
+                    limit * 2)
+                .GroupBy(item => StationSearchKey(item.Item), StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .Take(limit);
+            results.AddRange(matches.Select(item => new SearchResult
+            {
+                Kind = "FM",
+                Title = item.Item.Name,
+                Subtitle = JoinSearchDetail(item.Item.LocationText, item.Item.TechnicalText),
+                Icon = "\uE720",
+                ArtworkSource = item.Item.Favicon,
+                Key = StationSearchKey(item.Item),
+                Score = item.Score,
+                Station = item.Item
+            }));
         }
 
         var ordered = results
@@ -741,8 +776,9 @@ public partial class MainWindow : Window
             NavigateTop("Music");
             SelectPaneItem("songs");
             ShowMusicMode("songs");
-            var index = _allTracks.FindIndex(track => track.Path.Equals(result.Track.Path, StringComparison.OrdinalIgnoreCase));
-            SetQueue(_allTracks, index < 0 ? 0 : index);
+            var sortedTracks = SortTracks(_allTracks);
+            var index = sortedTracks.FindIndex(track => track.Path.Equals(result.Track.Path, StringComparison.OrdinalIgnoreCase));
+            SetQueue(sortedTracks, index < 0 ? 0 : index);
             await PlayTrackAsync(result.Track, allowCrossfade: _isPlaying && !_isRadio);
             return;
         }
@@ -777,40 +813,90 @@ public partial class MainWindow : Window
     private static ParsedSearch ParseSearch(string? raw)
     {
         var text = raw?.Trim() ?? string.Empty;
-        foreach (var prefix in new[]
-                 {
-                     ("artist:", SearchScope.Artist),
-                     ("album:", SearchScope.Album),
-                     ("music:", SearchScope.Music),
-                     ("song:", SearchScope.Song),
-                     ("radio:", SearchScope.Radio),
-                     ("fm:", SearchScope.Radio)
-                 })
+        foreach (var (prefix, scope) in SearchPrefixes)
         {
-            if (text.StartsWith(prefix.Item1, StringComparison.OrdinalIgnoreCase))
-                return new ParsedSearch(text[prefix.Item1.Length..].Trim(), prefix.Item2);
+            if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return new ParsedSearch(text[prefix.Length..].Trim(), scope);
         }
         return new ParsedSearch(text, SearchScope.All);
     }
 
-    private static int MatchScore(string query, params (string? Value, int Weight)[] fields)
+    private static List<RankedSearchItem<T>> FindBestMatches<T>(
+        IEnumerable<T> source,
+        Func<T, int> scoreSelector,
+        Comparison<T> tieBreaker,
+        int limit)
     {
-        if (string.IsNullOrWhiteSpace(query)) return 0;
-        var best = 0;
-        foreach (var (value, weight) in fields)
+        var matches = new List<RankedSearchItem<T>>(limit);
+        foreach (var item in source)
         {
-            if (string.IsNullOrWhiteSpace(value)) continue;
-            if (value.Equals(query, StringComparison.CurrentCultureIgnoreCase)) best = Math.Max(best, 140 + weight);
-            else if (value.StartsWith(query, StringComparison.CurrentCultureIgnoreCase)) best = Math.Max(best, 110 + weight);
-            else if (value.Contains($" {query}", StringComparison.CurrentCultureIgnoreCase)) best = Math.Max(best, 92 + weight);
-            else if (value.Contains(query, StringComparison.CurrentCultureIgnoreCase)) best = Math.Max(best, 70 + weight);
-        }
-        if (best > 0) return best;
+            var score = scoreSelector(item);
+            if (score <= 0) continue;
 
-        var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (tokens.Length <= 1) return 0;
-        var combined = string.Join(' ', fields.Select(field => field.Value).Where(value => !string.IsNullOrWhiteSpace(value)));
-        return tokens.All(token => combined.Contains(token, StringComparison.CurrentCultureIgnoreCase)) ? 58 : 0;
+            var insertAt = 0;
+            while (insertAt < matches.Count)
+            {
+                var existing = matches[insertAt];
+                if (score > existing.Score || score == existing.Score && tieBreaker(item, existing.Item) < 0) break;
+                insertAt++;
+            }
+            if (insertAt >= limit) continue;
+            matches.Insert(insertAt, new RankedSearchItem<T>(item, score));
+            if (matches.Count > limit) matches.RemoveAt(limit);
+        }
+        return matches;
+    }
+
+    private static string StationSearchKey(RadioStation station)
+    {
+        if (!string.IsNullOrWhiteSpace(station.Id)) return station.Id;
+        return string.IsNullOrWhiteSpace(station.StreamUrl) ? station.Name : station.StreamUrl;
+    }
+
+    private sealed class SearchMatcher
+    {
+        private readonly string _query;
+        private readonly string[] _tokens;
+
+        public SearchMatcher(string query)
+        {
+            _query = query;
+            _tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+
+        public int Score(
+            string? first, int firstWeight,
+            string? second = null, int secondWeight = 0,
+            string? third = null, int thirdWeight = 0,
+            string? fourth = null, int fourthWeight = 0,
+            string? fifth = null, int fifthWeight = 0)
+        {
+            var best = Math.Max(ScoreField(first, firstWeight), ScoreField(second, secondWeight));
+            best = Math.Max(best, ScoreField(third, thirdWeight));
+            best = Math.Max(best, ScoreField(fourth, fourthWeight));
+            best = Math.Max(best, ScoreField(fifth, fifthWeight));
+            if (best > 0 || _tokens.Length <= 1) return best;
+
+            foreach (var token in _tokens)
+            {
+                if (!Contains(first, token) && !Contains(second, token) && !Contains(third, token) &&
+                    !Contains(fourth, token) && !Contains(fifth, token)) return 0;
+            }
+            return 58;
+        }
+
+        private int ScoreField(string? value, int weight)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+            if (value.Equals(_query, StringComparison.CurrentCultureIgnoreCase)) return 140 + weight;
+            if (value.StartsWith(_query, StringComparison.CurrentCultureIgnoreCase)) return 110 + weight;
+            var index = value.IndexOf(_query, StringComparison.CurrentCultureIgnoreCase);
+            if (index < 0) return 0;
+            return index > 0 && value[index - 1] == ' ' ? 92 + weight : 70 + weight;
+        }
+
+        private static bool Contains(string? value, string token) =>
+            !string.IsNullOrWhiteSpace(value) && value.Contains(token, StringComparison.CurrentCultureIgnoreCase);
     }
 
     private static string JoinSearchDetail(string first, string second)
@@ -859,6 +945,7 @@ public partial class MainWindow : Window
     private void UpdateLibrary(IReadOnlyCollection<TrackItem> tracks)
     {
         _allTracks = tracks.ToList();
+        RebuildMusicSearchGroups();
         var total = TimeSpan.FromTicks(_allTracks.Sum(t => t.Duration.Ticks));
         LibraryStatsText.Text = _allTracks.Count == 1 ? "1 song" : $"{_allTracks.Count:N0} songs";
         if (total.TotalHours >= 1) LibraryStatsText.Text += $"  ·  {(int)total.TotalHours} hr {total.Minutes} min";
@@ -866,6 +953,42 @@ public partial class MainWindow : Window
         HeroDescription.Text = _allTracks.Count > 0 ? "Pick up where you left off or discover a live station." : "Add a music folder or tune in to a live station.";
         if (_currentSection == "Music") ShowMusicMode(_musicMode);
         if (!string.IsNullOrWhiteSpace(GlobalSearchBox.Text)) BuildUnifiedSearchResults();
+    }
+
+    private void RebuildMusicSearchGroups()
+    {
+        _artistSearchGroups = BuildMusicSearchGroups(
+            _allTracks.GroupBy(track => track.DisplayArtist, StringComparer.CurrentCultureIgnoreCase),
+            useGroupNameAsArtist: true);
+        _albumSearchGroups = BuildMusicSearchGroups(
+            _allTracks.GroupBy(track => track.DisplayAlbum, StringComparer.CurrentCultureIgnoreCase),
+            useGroupNameAsArtist: false);
+    }
+
+    private static List<MusicSearchGroup> BuildMusicSearchGroups(
+        IEnumerable<IGrouping<string, TrackItem>> groups,
+        bool useGroupNameAsArtist)
+    {
+        var result = new List<MusicSearchGroup>();
+        foreach (var group in groups)
+        {
+            TrackItem? first = null;
+            TrackItem? artworkTrack = null;
+            var count = 0;
+            foreach (var track in group)
+            {
+                first ??= track;
+                if (artworkTrack is null && !string.IsNullOrWhiteSpace(track.ArtworkPath)) artworkTrack = track;
+                count++;
+            }
+            if (first is null) continue;
+            result.Add(new MusicSearchGroup(
+                group.Key,
+                useGroupNameAsArtist ? group.Key : first.DisplayArtist,
+                count,
+                artworkTrack ?? first));
+        }
+        return result;
     }
 
     private void StartArtworkEnrichment(IReadOnlyCollection<TrackItem> tracks)
@@ -961,6 +1084,7 @@ public partial class MainWindow : Window
     private void ShowMusicMode(string mode)
     {
         _musicMode = mode;
+        _activeLibraryGroup = null;
         UpdateMusicContentLayout(mode);
         MusicEmptyPanel.Visibility = Visibility.Collapsed;
         MusicSongList.Visibility = Visibility.Collapsed;
@@ -1012,19 +1136,42 @@ public partial class MainWindow : Window
     {
         var search = ParseSearch(GlobalSearchBox.Text);
         var query = search.Scope == SearchScope.Radio ? string.Empty : search.Term;
-        var groups = source
+        var candidates = source
             .Where(group => string.IsNullOrWhiteSpace(query) || group.Key.Contains(query, StringComparison.CurrentCultureIgnoreCase))
-            .Select(group => new LibraryGroup
-            {
-                Name = group.Key,
-                Kind = kind,
-                Count = group.Count(),
-                Duration = TimeSpan.FromTicks(group.Sum(track => track.Duration.Ticks)),
-                ArtworkPath = group.Select(track => track.ArtworkPath).FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path)) ?? string.Empty
-            })
-            .OrderBy(group => group.Name.StartsWith("Unknown", StringComparison.OrdinalIgnoreCase))
-            .ThenBy(group => group.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
+
+        IOrderedEnumerable<IGrouping<string, TrackItem>> ordered;
+        if (_settings.MusicSortOrder == "RecentlyPlayed")
+        {
+            var recent = GetMusicRecentLookup();
+            ordered = candidates
+                .OrderByDescending(group => group.Max(track => MusicLastPlayed(track, recent)))
+                .ThenBy(group => group.Key, StringComparer.CurrentCultureIgnoreCase);
+        }
+        else
+        {
+            ordered = _settings.MusicSortOrder switch
+            {
+                "DateAdded" => candidates
+                    .OrderByDescending(group => group.Max(track => track.DateAddedUtc))
+                    .ThenBy(group => group.Key, StringComparer.CurrentCultureIgnoreCase),
+                "DateModified" => candidates
+                    .OrderByDescending(group => group.Max(track => track.ModifiedUtc))
+                    .ThenBy(group => group.Key, StringComparer.CurrentCultureIgnoreCase),
+                _ => candidates
+                    .OrderBy(group => group.Key.StartsWith("Unknown", StringComparison.OrdinalIgnoreCase))
+                    .ThenBy(group => group.Key, StringComparer.CurrentCultureIgnoreCase)
+            };
+        }
+
+        var groups = ordered.Select(group => new LibraryGroup
+        {
+            Name = group.Key,
+            Kind = kind,
+            Count = group.Count(),
+            Duration = TimeSpan.FromTicks(group.Sum(track => track.Duration.Ticks)),
+            ArtworkPath = group.Select(track => track.ArtworkPath).FirstOrDefault(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path)) ?? string.Empty
+        }).ToList();
         LibraryGroups.ReplaceAll(groups);
         GroupScroll.Visibility = groups.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         MusicEmptyPanel.Visibility = groups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -1044,10 +1191,87 @@ public partial class MainWindow : Window
                      track.DisplayArtist.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
                      track.DisplayAlbum.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
                      track.Genre.Contains(query, StringComparison.CurrentCultureIgnoreCase)
-            })).ToList();
-        VisibleTracks.ReplaceAll(filtered);
-        MusicSongList.Visibility = filtered.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        MusicEmptyPanel.Visibility = filtered.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            }));
+        var sorted = SortTracks(filtered);
+        VisibleTracks.ReplaceAll(sorted);
+        MusicSongList.Visibility = sorted.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        MusicEmptyPanel.Visibility = sorted.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private List<TrackItem> SortTracks(IEnumerable<TrackItem> source)
+    {
+        var tracks = source.ToList();
+        IOrderedEnumerable<TrackItem> ordered;
+        if (_settings.MusicSortOrder == "RecentlyPlayed")
+        {
+            var recent = GetMusicRecentLookup();
+            ordered = tracks
+                .OrderByDescending(track => MusicLastPlayed(track, recent))
+                .ThenBy(track => track.DisplayTitle, StringComparer.CurrentCultureIgnoreCase);
+        }
+        else
+        {
+            ordered = _settings.MusicSortOrder switch
+            {
+                "DateAdded" => tracks
+                    .OrderByDescending(track => track.DateAddedUtc)
+                    .ThenBy(track => track.DisplayTitle, StringComparer.CurrentCultureIgnoreCase),
+                "DateModified" => tracks
+                    .OrderByDescending(track => track.ModifiedUtc)
+                    .ThenBy(track => track.DisplayTitle, StringComparer.CurrentCultureIgnoreCase),
+                _ => tracks
+                    .OrderBy(track => track.DisplayTitle, StringComparer.CurrentCultureIgnoreCase)
+                    .ThenBy(track => track.DisplayArtist, StringComparer.CurrentCultureIgnoreCase)
+            };
+        }
+        return ordered
+            .ThenBy(track => track.DisplayAlbum, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(track => track.Path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private Dictionary<string, DateTimeOffset> GetMusicRecentLookup()
+    {
+        var lookup = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in _settings.RecentPlays.Where(item => !item.IsRadio))
+        {
+            var key = string.IsNullOrWhiteSpace(item.SourceId) ? item.Path : item.SourceId;
+            if (!lookup.TryGetValue(key, out var existing) || item.PlayedAt > existing)
+                lookup[key] = item.PlayedAt;
+            if (!key.Equals(item.Path, StringComparison.OrdinalIgnoreCase) &&
+                (!lookup.TryGetValue(item.Path, out existing) || item.PlayedAt > existing))
+                lookup[item.Path] = item.PlayedAt;
+        }
+        return lookup;
+    }
+
+    private static DateTimeOffset MusicLastPlayed(TrackItem track, Dictionary<string, DateTimeOffset> recent) =>
+        recent.TryGetValue(track.Path, out var playedAt) ? playedAt : DateTimeOffset.MinValue;
+
+    private void MusicSortButton_Click(object sender, RoutedEventArgs e) => MusicSortPopup.IsOpen = !MusicSortPopup.IsOpen;
+
+    private void MusicSortOption_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { CommandParameter: string order } ||
+            order is not ("Alphabetical" or "RecentlyPlayed" or "DateAdded" or "DateModified")) return;
+        _settings.MusicSortOrder = order;
+        MusicSortPopup.IsOpen = false;
+        UpdateSortSelectionVisuals();
+
+        RefreshMusicSortView(rebuildQueue: true);
+        SaveSoon();
+    }
+
+    private void RefreshMusicSortView(bool rebuildQueue)
+    {
+        if (_activeLibraryGroup is not null)
+            OpenLibraryGroup(_activeLibraryGroup);
+        else
+            ShowMusicMode(_musicMode);
+
+        if (rebuildQueue && _currentTrack is not null &&
+            VisibleTracks.Any(track => track.Path.Equals(_currentTrack.Path, StringComparison.OrdinalIgnoreCase)))
+            SetQueue(VisibleTracks, _currentTrack);
     }
 
     private async void AddFolderButton_Click(object sender, RoutedEventArgs e)
@@ -1138,9 +1362,10 @@ public partial class MainWindow : Window
 
     private void OpenLibraryGroup(LibraryGroup group)
     {
-        var tracks = group.Kind == "artist"
-            ? _allTracks.Where(track => track.DisplayArtist.Equals(group.Name, StringComparison.CurrentCultureIgnoreCase)).ToList()
-            : _allTracks.Where(track => track.DisplayAlbum.Equals(group.Name, StringComparison.CurrentCultureIgnoreCase)).ToList();
+        _activeLibraryGroup = group;
+        var tracks = SortTracks(group.Kind == "artist"
+            ? _allTracks.Where(track => track.DisplayArtist.Equals(group.Name, StringComparison.CurrentCultureIgnoreCase))
+            : _allTracks.Where(track => track.DisplayAlbum.Equals(group.Name, StringComparison.CurrentCultureIgnoreCase)));
         MusicPageTitle.Text = group.Name;
         MusicPageSubtitle.Text = $"{group.CountText}  ·  {group.DurationText}";
         VisibleTracks.ReplaceAll(tracks);
@@ -1173,9 +1398,10 @@ public partial class MainWindow : Window
     {
         if (_allTracks.Count > 0)
         {
-            var random = Random.Shared.Next(_allTracks.Count);
-            SetQueue(_allTracks, random);
-            await PlayTrackAsync(_allTracks[random], allowCrossfade: false);
+            var tracks = SortTracks(_allTracks);
+            var random = Random.Shared.Next(tracks.Count);
+            SetQueue(tracks, random);
+            await PlayTrackAsync(tracks[random], allowCrossfade: false);
         }
         else
         {
@@ -1270,13 +1496,13 @@ public partial class MainWindow : Window
     {
         var search = ParseSearch(GlobalSearchBox.Text);
         var query = search.Scope is SearchScope.Music or SearchScope.Song or SearchScope.Artist or SearchScope.Album ? string.Empty : search.Term;
-        var filtered = _allStations.Where(station =>
+        var filtered = SortStations(_allStations.Where(station =>
             string.IsNullOrWhiteSpace(query) ||
             station.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
             station.Country.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
             station.State.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
             station.Tags.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
-            station.Language.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToList();
+            station.Language.Contains(query, StringComparison.CurrentCultureIgnoreCase)));
         VisibleStations.ReplaceAll(filtered);
         RadioLoadingPanel.Visibility = Visibility.Collapsed;
         RadioEmptyPanel.Visibility = filtered.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -1285,6 +1511,102 @@ public partial class MainWindow : Window
         RadioEmptyDescription.Text = string.IsNullOrWhiteSpace(query) ? "Refresh the list or try the other FM collection." : "Try a station name, country, city or genre.";
         RadioCountText.Text = filtered.Count == 1 ? "1 station" : $"{filtered.Count:N0} stations";
     }
+
+    private List<RadioStation> SortStations(IEnumerable<RadioStation> source)
+    {
+        var stations = source.ToList();
+        IOrderedEnumerable<RadioStation> ordered;
+        if (_settings.RadioSortOrder == "RecentlyPlayed")
+        {
+            var recent = GetRadioRecentLookup();
+            ordered = stations
+                .OrderByDescending(station => RadioLastPlayed(station, recent))
+                .ThenBy(station => station.Name, StringComparer.CurrentCultureIgnoreCase);
+        }
+        else
+        {
+            ordered = _settings.RadioSortOrder == "DateAdded"
+                ? stations
+                    .OrderByDescending(station => station.DirectoryDateAdded)
+                    .ThenBy(station => station.Name, StringComparer.CurrentCultureIgnoreCase)
+                : stations.OrderBy(station => station.Name, StringComparer.CurrentCultureIgnoreCase);
+        }
+        return ordered
+            .ThenBy(station => station.Country, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(station => station.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private RadioRecentIndex GetRadioRecentLookup()
+    {
+        var sources = new Dictionary<string, DateTimeOffset>(StringComparer.OrdinalIgnoreCase);
+        var names = new Dictionary<string, DateTimeOffset>(StringComparer.CurrentCultureIgnoreCase);
+        foreach (var item in _settings.RecentPlays.Where(item => item.IsRadio))
+        {
+            AddRadioRecentKey(sources, item.SourceId, item.PlayedAt);
+            AddRadioRecentKey(sources, item.Path, item.PlayedAt);
+            AddRadioRecentKey(names, item.Title, item.PlayedAt);
+        }
+        return new RadioRecentIndex(sources, names);
+    }
+
+    private static void AddRadioRecentKey(Dictionary<string, DateTimeOffset> lookup, string? key, DateTimeOffset playedAt)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return;
+        if (!lookup.TryGetValue(key, out var existing) || playedAt > existing) lookup[key] = playedAt;
+    }
+
+    private static DateTimeOffset RadioLastPlayed(RadioStation station, RadioRecentIndex recent)
+    {
+        if (!string.IsNullOrWhiteSpace(station.Id) && recent.Sources.TryGetValue(station.Id, out var playedAt)) return playedAt;
+        if (!string.IsNullOrWhiteSpace(station.StreamUrl) && recent.Sources.TryGetValue(station.StreamUrl, out playedAt)) return playedAt;
+        return recent.Names.TryGetValue(station.Name, out playedAt) ? playedAt : DateTimeOffset.MinValue;
+    }
+
+    private void RadioSortButton_Click(object sender, RoutedEventArgs e) => RadioSortPopup.IsOpen = !RadioSortPopup.IsOpen;
+
+    private void RadioSortOption_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { CommandParameter: string order } ||
+            order is not ("Alphabetical" or "RecentlyPlayed" or "DateAdded")) return;
+        _settings.RadioSortOrder = order;
+        RadioSortPopup.IsOpen = false;
+        UpdateSortSelectionVisuals();
+        if (_allStations.Count > 0) ApplyRadioFilter();
+        SaveSoon();
+    }
+
+    private void UpdateSortSelectionVisuals()
+    {
+        if (MusicSortButton is null || RadioSortButton is null) return;
+        MusicSortButton.Tag = "selected";
+        RadioSortButton.Tag = "selected";
+        MusicSortButton.ToolTip = $"Sort music: {MusicSortLabel(_settings.MusicSortOrder)}";
+        RadioSortButton.ToolTip = $"Sort FM: {RadioSortLabel(_settings.RadioSortOrder)}";
+
+        MusicSortAlphabeticalOption.Tag = _settings.MusicSortOrder == "Alphabetical" ? "selected" : null;
+        MusicSortRecentOption.Tag = _settings.MusicSortOrder == "RecentlyPlayed" ? "selected" : null;
+        MusicSortDateAddedOption.Tag = _settings.MusicSortOrder == "DateAdded" ? "selected" : null;
+        MusicSortDateModifiedOption.Tag = _settings.MusicSortOrder == "DateModified" ? "selected" : null;
+        RadioSortAlphabeticalOption.Tag = _settings.RadioSortOrder == "Alphabetical" ? "selected" : null;
+        RadioSortRecentOption.Tag = _settings.RadioSortOrder == "RecentlyPlayed" ? "selected" : null;
+        RadioSortDateAddedOption.Tag = _settings.RadioSortOrder == "DateAdded" ? "selected" : null;
+    }
+
+    private static string MusicSortLabel(string order) => order switch
+    {
+        "RecentlyPlayed" => "Recently Played",
+        "DateAdded" => "Date Added",
+        "DateModified" => "Date Modified",
+        _ => "Alphabetical"
+    };
+
+    private static string RadioSortLabel(string order) => order switch
+    {
+        "RecentlyPlayed" => "Recently Played",
+        "DateAdded" => "Date Added",
+        _ => "Alphabetical"
+    };
 
     private async void RefreshRadioButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1489,7 +1811,7 @@ public partial class MainWindow : Window
     {
         if (recent.Path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || recent.Path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
-            await PlayStationAsync(new RadioStation { Name = recent.Title, Url = recent.Path, UrlResolved = recent.Path, Country = recent.Artist, Tags = recent.Album, LastCheckOk = 1 });
+            await PlayStationAsync(new RadioStation { Id = recent.SourceId, Name = recent.Title, Url = recent.Path, UrlResolved = recent.Path, Country = recent.Artist, Tags = recent.Album, LastCheckOk = 1 });
             return;
         }
         var track = _allTracks.FirstOrDefault(item => item.Path.Equals(recent.Path, StringComparison.OrdinalIgnoreCase)) ?? recent.ToTrack();
@@ -1498,8 +1820,9 @@ public partial class MainWindow : Window
             ShowToast("That music file is no longer available at its original location.", "\uE7BA");
             return;
         }
-        var index = _allTracks.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
-        SetQueue(index >= 0 ? _allTracks : [track], index >= 0 ? index : 0);
+        var sortedTracks = SortTracks(_allTracks);
+        var index = sortedTracks.FindIndex(item => item.Path.Equals(track.Path, StringComparison.OrdinalIgnoreCase));
+        SetQueue(index >= 0 ? sortedTracks : [track], index >= 0 ? index : 0);
         await PlayTrackAsync(track, allowCrossfade: _isPlaying && !_isRadio);
     }
 
@@ -1922,6 +2245,8 @@ public partial class MainWindow : Window
         var image = LoadArtworkSource(source);
         NowAlbumImage.Source = image;
         HomeHeroImage.Source = image;
+        MusicVisualizerPanel.ArtworkSource = image;
+        RadioVisualizerPanel.ArtworkSource = image;
     }
 
     private static BitmapSource? LoadArtworkSource(string? source) => ArtworkImageCache.Load(source, 360);
@@ -1960,6 +2285,7 @@ public partial class MainWindow : Window
         var item = new RecentPlay
         {
             Path = track.Path,
+            SourceId = track.Path,
             Title = track.DisplayTitle,
             Artist = track.DisplayArtist,
             Album = track.DisplayAlbum,
@@ -1976,6 +2302,7 @@ public partial class MainWindow : Window
         AddRecent(new RecentPlay
         {
             Path = string.IsNullOrWhiteSpace(playableUrl) ? station.StreamUrl : playableUrl,
+            SourceId = station.Id,
             Title = station.Name,
             Artist = string.IsNullOrWhiteSpace(station.LocationText) ? "Live FM radio" : station.LocationText,
             Album = station.TagsText,
@@ -1986,10 +2313,16 @@ public partial class MainWindow : Window
 
     private void AddRecent(RecentPlay item)
     {
-        _settings.RecentPlays.RemoveAll(existing => existing.Path.Equals(item.Path, StringComparison.OrdinalIgnoreCase));
+        _settings.RecentPlays.RemoveAll(existing =>
+            string.Equals(existing.Path, item.Path, StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrWhiteSpace(item.SourceId) && string.Equals(existing.SourceId, item.SourceId, StringComparison.OrdinalIgnoreCase)));
         _settings.RecentPlays.Insert(0, item);
         if (_settings.RecentPlays.Count > 30) _settings.RecentPlays.RemoveRange(30, _settings.RecentPlays.Count - 30);
         RefreshRecentItems();
+        if (item.IsRadio && _settings.RadioSortOrder == "RecentlyPlayed" && _currentSection == "FM" && _allStations.Count > 0)
+            ApplyRadioFilter();
+        else if (!item.IsRadio && _settings.MusicSortOrder == "RecentlyPlayed" && _currentSection == "Music")
+            RefreshMusicSortView(rebuildQueue: true);
         SaveSoon();
     }
 
@@ -2021,6 +2354,7 @@ public partial class MainWindow : Window
         RadioVisualizerPanel.SelectedStyle = visualizerStyle;
         MusicVisualizerPanel.LiteMode = _settings.LiteMode;
         RadioVisualizerPanel.LiteMode = _settings.LiteMode;
+        UpdateSortSelectionVisuals();
         UpdateEffectLabels();
         UpdateFolderList();
     }

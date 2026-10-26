@@ -66,7 +66,10 @@ public static class AppStorage
             if (!File.Exists(LibraryCachePath)) return [];
             var tracks = JsonSerializer.Deserialize<List<TrackItem>>(File.ReadAllText(LibraryCachePath), JsonOptions) ?? [];
             foreach (var track in tracks)
+            {
                 track.ArtworkPath = MigrateStoredPath(track.ArtworkPath);
+                NormalizeTrackDates(track);
+            }
             return tracks.Where(t => !string.IsNullOrWhiteSpace(t.Path) && File.Exists(t.Path)).ToList();
         }
         catch
@@ -146,6 +149,22 @@ public static class AppStorage
         return path;
     }
 
+    private static void NormalizeTrackDates(TrackItem track)
+    {
+        try
+        {
+            if (track.ModifiedUtc == default && File.Exists(track.Path))
+                track.ModifiedUtc = File.GetLastWriteTimeUtc(track.Path);
+            if (track.DateAddedUtc == default && File.Exists(track.Path))
+                track.DateAddedUtc = File.GetCreationTimeUtc(track.Path);
+        }
+        catch
+        {
+            // Missing date metadata only places the item after dated tracks.
+        }
+        if (track.DateAddedUtc == default) track.DateAddedUtc = track.ModifiedUtc;
+    }
+
     private static void Normalize(AppSettings settings)
     {
         settings.ThemeMode = settings.ThemeMode is "Dark" or "Light" or "System" ? settings.ThemeMode : "System";
@@ -165,10 +184,16 @@ public static class AppStorage
         settings.ReverbMix = Math.Clamp(settings.ReverbMix, 0, 0.6f);
         settings.CrossfadeSeconds = Math.Clamp(settings.CrossfadeSeconds, 0.5, 2);
         settings.RepeatMode = settings.RepeatMode is "All" or "One" ? settings.RepeatMode : "Off";
-        settings.VisualizerStyle = settings.VisualizerStyle is "Waves" or "ModernWaves" or "Topographic" or "SimpleSpectrum"
+        settings.VisualizerStyle = settings.VisualizerStyle is "Waves" or "ModernWaves" or "Topographic" or "SimpleSpectrum" or "CdDays"
             ? settings.VisualizerStyle
             : "Waves";
-        settings.WindowWidth = Math.Clamp(settings.WindowWidth, 900, 2560);
-        settings.WindowHeight = Math.Clamp(settings.WindowHeight, 620, 1600);
+        settings.MusicSortOrder = settings.MusicSortOrder is "Alphabetical" or "RecentlyPlayed" or "DateAdded" or "DateModified"
+            ? settings.MusicSortOrder
+            : "Alphabetical";
+        settings.RadioSortOrder = settings.RadioSortOrder is "Alphabetical" or "RecentlyPlayed" or "DateAdded"
+            ? settings.RadioSortOrder
+            : "Alphabetical";
+        settings.WindowWidth = Math.Clamp(settings.WindowWidth, 1024, 2560);
+        settings.WindowHeight = Math.Clamp(settings.WindowHeight, 600, 1600);
     }
 }

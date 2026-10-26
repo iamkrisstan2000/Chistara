@@ -10,7 +10,8 @@ public enum VisualizationStyle
     Waves,
     ModernWaves,
     Topographic,
-    SimpleSpectrum
+    SimpleSpectrum,
+    CdDays
 }
 
 /// <summary>
@@ -35,6 +36,16 @@ public sealed class AudioVisualizer : FrameworkElement
         nameof(LiteMode), typeof(bool), typeof(AudioVisualizer),
         new FrameworkPropertyMetadata(false));
 
+    public static readonly DependencyProperty ArtworkSourceProperty = DependencyProperty.Register(
+        nameof(ArtworkSource), typeof(ImageSource), typeof(AudioVisualizer),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    private static readonly RadialGradientBrush CdBaseBrush = CreateCdBaseBrush();
+    private static readonly LinearGradientBrush CdSheenBrush = CreateCdSheenBrush();
+    private static readonly RadialGradientBrush CdHubBrush = CreateCdHubBrush();
+    private static readonly SolidColorBrush CdGrooveBrush = CreateFrozenBrush(Color.FromArgb(36, 255, 255, 255));
+    private static readonly SolidColorBrush CdFineGrooveBrush = CreateFrozenBrush(Color.FromArgb(26, 255, 255, 255));
+    private static readonly SolidColorBrush CdHoleBorderBrush = CreateFrozenBrush(Color.FromArgb(72, 255, 255, 255));
     private readonly float[] _spectrum = new float[64];
     private readonly float[] _waveform = new float[192];
     private readonly float[] _peaks = new float[64];
@@ -46,6 +57,7 @@ public sealed class AudioVisualizer : FrameworkElement
     private RectangleGeometry? _clipGeometry;
     private Size _clipSize;
     private double _phase;
+    private double _discAngle;
     private double _level;
     private double _bass;
     private double _beat;
@@ -83,6 +95,12 @@ public sealed class AudioVisualizer : FrameworkElement
     {
         get => (bool)GetValue(LiteModeProperty);
         set => SetValue(LiteModeProperty, value);
+    }
+
+    public ImageSource? ArtworkSource
+    {
+        get => (ImageSource?)GetValue(ArtworkSourceProperty);
+        set => SetValue(ArtworkSourceProperty, value);
     }
 
     public Func<VisualizationFrame>? FrameProvider { get; set; }
@@ -142,6 +160,8 @@ public sealed class AudioVisualizer : FrameworkElement
 
         var motion = IsPlaybackActive ? 0.58 + _bass * 1.8 + _beat * 1.1 : 0.16;
         _phase += elapsed * motion;
+        if (IsPlaybackActive)
+            _discAngle = (_discAngle + elapsed * (36 + _level * 18 + _beat * 12)) % 360;
         UpdatePeaks((float)elapsed);
         InvalidateVisual();
     }
@@ -164,6 +184,9 @@ public sealed class AudioVisualizer : FrameworkElement
                 break;
             case VisualizationStyle.SimpleSpectrum:
                 DrawSimpleSpectrum(drawingContext, bounds);
+                break;
+            case VisualizationStyle.CdDays:
+                DrawCdDays(drawingContext, bounds);
                 break;
             default:
                 DrawWaves(drawingContext, bounds);
@@ -337,6 +360,69 @@ public sealed class AudioVisualizer : FrameworkElement
         }
     }
 
+    private void DrawCdDays(DrawingContext dc, Rect bounds)
+    {
+        var center = new Point(bounds.Width * 0.5, bounds.Height * 0.52);
+        var radius = Math.Max(54, Math.Min(bounds.Width, bounds.Height) * 0.335);
+        radius = Math.Min(radius, Math.Min(bounds.Width * 0.45, bounds.Height * 0.43));
+        var pulse = IsPlaybackActive ? _level * 0.75 + _beat : 0;
+        var outlineRadius = radius + 2.5 + pulse * 2.8;
+
+        dc.DrawEllipse(Accent(0.025 + pulse * 0.025), null, center, outlineRadius + 13, outlineRadius + 13);
+        dc.DrawEllipse(null, CreatePen(0.045 + pulse * 0.055, 15 + pulse * 5), center, outlineRadius, outlineRadius);
+        dc.DrawEllipse(null, CreatePen(0.16 + pulse * 0.22, 5 + pulse * 2), center, outlineRadius, outlineRadius);
+
+        var discClip = new EllipseGeometry(center, radius, radius);
+        dc.DrawEllipse(CdBaseBrush, new Pen(Accent(0.42), 1.1), center, radius, radius);
+        dc.PushTransform(new RotateTransform(_discAngle, center.X, center.Y));
+        dc.PushClip(discClip);
+        if (ArtworkSource is { } artwork)
+        {
+            var diameter = radius * 2;
+            var sourceWidth = artwork.Width;
+            var sourceHeight = artwork.Height;
+            var ratio = sourceWidth > 0 && sourceHeight > 0 ? sourceWidth / sourceHeight : 1;
+            var imageRect = ratio >= 1
+                ? new Rect(center.X - diameter * ratio / 2, center.Y - radius, diameter * ratio, diameter)
+                : new Rect(center.X - radius, center.Y - diameter / ratio / 2, diameter, diameter / ratio);
+            dc.DrawImage(artwork, imageRect);
+        }
+        else
+        {
+            dc.DrawEllipse(CdBaseBrush, null, center, radius, radius);
+        }
+        dc.Pop();
+        dc.Pop();
+
+        dc.PushClip(discClip);
+        dc.DrawEllipse(CdSheenBrush, null, center, radius, radius);
+        dc.DrawEllipse(null, new Pen(CdGrooveBrush, 0.55), center, radius * 0.78, radius * 0.78);
+        dc.DrawEllipse(null, new Pen(CdFineGrooveBrush, 0.45), center, radius * 0.57, radius * 0.57);
+        dc.Pop();
+
+        var hubRadius = Math.Max(12, radius * 0.115);
+        dc.DrawEllipse(CdHubBrush, new Pen(Accent(0.48), 1), center, hubRadius, hubRadius);
+        dc.DrawEllipse(Brushes.Black, new Pen(CdHoleBorderBrush, 0.7), center, hubRadius * 0.34, hubRadius * 0.34);
+
+        var pointCount = LiteMode ? 64 : 96;
+        var points = _pointBuffer;
+        for (var index = 0; index < pointCount; index++)
+        {
+            var position = index / (double)pointCount;
+            var spectrum = SampleSpectrum(position * 0.86);
+            var wave = SampleWave(position) * radius * 0.012;
+            var reactive = IsPlaybackActive
+                ? spectrum * radius * (0.024 + _level * 0.038) + _beat * radius * 0.012 + wave
+                : 0;
+            var ringRadius = outlineRadius + reactive;
+            var angle = position * Math.PI * 2 - Math.PI / 2;
+            points[index] = new Point(center.X + Math.Cos(angle) * ringRadius, center.Y + Math.Sin(angle) * ringRadius);
+        }
+        var reactiveOutline = BuildClosedGeometry(points, pointCount);
+        dc.DrawGeometry(null, CreatePen(0.055 + pulse * 0.07, 10 + pulse * 3), reactiveOutline);
+        dc.DrawGeometry(null, CreatePen(0.56 + Math.Min(0.34, pulse * 0.22), 1.35 + _level * 1.25), reactiveOutline);
+    }
+
     private void UpdatePeaks(float elapsed)
     {
         for (var index = 0; index < _peaks.Length; index++)
@@ -439,6 +525,69 @@ public sealed class AudioVisualizer : FrameworkElement
         }
         geometry.Freeze();
         return geometry;
+    }
+
+    private static StreamGeometry BuildClosedGeometry(IReadOnlyList<Point> points, int count)
+    {
+        var geometry = new StreamGeometry();
+        using (var context = geometry.Open())
+        {
+            context.BeginFigure(points[0], false, true);
+            for (var index = 1; index < count; index++)
+                context.LineTo(points[index], true, true);
+        }
+        geometry.Freeze();
+        return geometry;
+    }
+
+    private static RadialGradientBrush CreateCdBaseBrush()
+    {
+        var brush = new RadialGradientBrush
+        {
+            Center = new Point(0.43, 0.38),
+            GradientOrigin = new Point(0.36, 0.31),
+            RadiusX = 0.72,
+            RadiusY = 0.72
+        };
+        brush.GradientStops.Add(new GradientStop(Color.FromRgb(86, 94, 112), 0));
+        brush.GradientStops.Add(new GradientStop(Color.FromRgb(35, 41, 55), 0.52));
+        brush.GradientStops.Add(new GradientStop(Color.FromRgb(13, 17, 27), 1));
+        brush.Freeze();
+        return brush;
+    }
+
+    private static LinearGradientBrush CreateCdSheenBrush()
+    {
+        var brush = new LinearGradientBrush
+        {
+            StartPoint = new Point(0.08, 0.04),
+            EndPoint = new Point(0.92, 0.96)
+        };
+        brush.GradientStops.Add(new GradientStop(Colors.Transparent, 0));
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(14, 255, 255, 255), 0.27));
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(88, 255, 255, 255), 0.39));
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(8, 255, 255, 255), 0.49));
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(48, 180, 220, 255), 0.66));
+        brush.GradientStops.Add(new GradientStop(Colors.Transparent, 0.78));
+        brush.Freeze();
+        return brush;
+    }
+
+    private static RadialGradientBrush CreateCdHubBrush()
+    {
+        var brush = new RadialGradientBrush();
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(218, 236, 242, 250), 0));
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(176, 45, 51, 66), 0.58));
+        brush.GradientStops.Add(new GradientStop(Color.FromArgb(224, 10, 13, 21), 1));
+        brush.Freeze();
+        return brush;
+    }
+
+    private static SolidColorBrush CreateFrozenBrush(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
     }
 
     private static void SmoothArray(float[] current, IReadOnlyList<float> target, float attack, float release)

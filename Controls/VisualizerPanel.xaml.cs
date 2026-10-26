@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Chistara.Services;
 
@@ -77,6 +78,17 @@ public partial class VisualizerPanel : UserControl
                 .OfType<ComboBoxItem>()
                 .FirstOrDefault(item => string.Equals(item.Tag?.ToString(), tag, StringComparison.Ordinal));
             _synchronizing = false;
+            UpdatePlaybackState();
+        }
+    }
+
+    public ImageSource? ArtworkSource
+    {
+        get => VisualizerCanvas.ArtworkSource;
+        set
+        {
+            VisualizerCanvas.ArtworkSource = value;
+            UpdatePlaybackState();
         }
     }
 
@@ -130,6 +142,7 @@ public partial class VisualizerPanel : UserControl
         EngageSelector();
         _selectedStyle = style;
         VisualizerCanvas.SelectedStyle = style;
+        UpdatePlaybackState();
         StyleChanged?.Invoke(this, new VisualizationStyleChangedEventArgs(style));
         QueueSelectorCollapse();
     }
@@ -138,6 +151,7 @@ public partial class VisualizerPanel : UserControl
     {
         if (VisualizerCanvas is null) return;
         VisualizerCanvas.IsPlaybackActive = _isPlaybackActive;
-        IdleOverlay.Visibility = _isPlaybackActive ? Visibility.Collapsed : Visibility.Visible;
+        var showArtworkAtRest = _selectedStyle == VisualizationStyle.CdDays && ArtworkSource is not null;
+        IdleOverlay.Visibility = _isPlaybackActive || showArtworkAtRest ? Visibility.Collapsed : Visibility.Visible;
     }
 }

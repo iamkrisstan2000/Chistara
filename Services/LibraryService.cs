@@ -74,6 +74,7 @@ public static class LibraryService
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var filesSeen = 0;
             var maxTracks = liteMode ? 2500 : 50000;
+            var discoveredAtUtc = DateTime.UtcNow;
             var lastProgressTimestamp = Stopwatch.GetTimestamp();
 
             foreach (var root in roots)
@@ -85,21 +86,26 @@ public static class LibraryService
                     if (!seen.Add(path)) continue;
 
                     TrackItem track;
+                    var dateAdded = discoveredAtUtc;
                     try
                     {
                         var modified = System.IO.File.GetLastWriteTimeUtc(path);
-                        if (cache.TryGetValue(path, out var cached) && Math.Abs((cached.ModifiedUtc - modified).TotalSeconds) < 1)
+                        cache.TryGetValue(path, out var cached);
+                        if (cached?.DateAddedUtc is { } cachedAdded && cachedAdded != default)
+                            dateAdded = cachedAdded;
+                        if (cached is not null && Math.Abs((cached.ModifiedUtc - modified).TotalSeconds) < 1)
                         {
+                            cached.DateAddedUtc = dateAdded;
                             track = cached;
                         }
                         else
                         {
-                            track = ReadTrack(path, modified);
+                            track = ReadTrack(path, modified, dateAdded);
                         }
                     }
                     catch
                     {
-                        track = CreateFallbackTrack(path, DateTime.MinValue);
+                        track = CreateFallbackTrack(path, DateTime.MinValue, dateAdded);
                     }
 
                     result.Add(track);
@@ -143,7 +149,7 @@ public static class LibraryService
         CancellationToken cancellationToken) =>
         ScanAsync([root], null, liteMode, progress, cancellationToken);
 
-    private static TrackItem ReadTrack(string path, DateTime modifiedUtc)
+    private static TrackItem ReadTrack(string path, DateTime modifiedUtc, DateTime dateAddedUtc)
     {
         try
         {
@@ -171,6 +177,7 @@ public static class LibraryService
                 Album = album,
                 Genre = tag.Genres.FirstOrDefault()?.Trim() ?? string.Empty,
                 Duration = media.Properties.Duration,
+                DateAddedUtc = dateAddedUtc,
                 ModifiedUtc = modifiedUtc,
                 Source = "Library",
                 ArtworkPath = artworkPath
@@ -178,14 +185,14 @@ public static class LibraryService
         }
         catch
         {
-            return CreateFallbackTrack(path, modifiedUtc);
+            return CreateFallbackTrack(path, modifiedUtc, dateAddedUtc);
         }
     }
 
     private static string FirstUseful(params string?[] candidates) =>
         candidates.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? "Unknown artist";
 
-    private static TrackItem CreateFallbackTrack(string path, DateTime modifiedUtc)
+    private static TrackItem CreateFallbackTrack(string path, DateTime modifiedUtc, DateTime dateAddedUtc)
     {
         var album = new DirectoryInfo(System.IO.Path.GetDirectoryName(path) ?? string.Empty).Name is { Length: > 0 } folder ? folder : "Unknown album";
         return new TrackItem
@@ -195,6 +202,7 @@ public static class LibraryService
             Artist = "Unknown artist",
             Album = album,
             ArtworkPath = ArtworkService.FindCachedArtwork("Unknown artist", album) ?? string.Empty,
+            DateAddedUtc = dateAddedUtc,
             ModifiedUtc = modifiedUtc,
             Source = "Library"
         };

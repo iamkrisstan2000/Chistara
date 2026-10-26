@@ -7,7 +7,7 @@
         xmlns:controls="clr-namespace:Chistara.Controls"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
-        Title="Chistara" Width="1128" Height="796" MinWidth="900" MinHeight="620"
+        Title="Chistara" Width="1128" Height="796" MinWidth="1024" MinHeight="600"
         WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize"
         AllowsTransparency="False" Background="Transparent" Icon="Assets/Chistara.ico"
         SourceInitialized="Window_SourceInitialized" Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown"
@@ -121,6 +121,30 @@
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
             <Style.Triggers>
                 <Trigger Property="Tag" Value="selected"><Setter Property="Background" Value="{DynamicResource AccentLowBrush}"/><Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/></Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SortIconButtonStyle" TargetType="Button" BasedOn="{StaticResource FluentButtonStyle}">
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="MinWidth" Value="36"/>
+            <Setter Property="Height" Value="34"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="7,0,0,0"/>
+            <Setter Property="FontFamily" Value="{DynamicResource IconFont}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="selected"><Setter Property="Background" Value="{DynamicResource AccentLowBrush}"/><Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/><Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/></Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SortOptionButtonStyle" TargetType="Button" BasedOn="{StaticResource FluentButtonStyle}">
+            <Setter Property="Width" Value="176"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Margin" Value="0,1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Style.Triggers>
+                <Trigger Property="Tag" Value="selected"><Setter Property="Background" Value="{DynamicResource AccentLowBrush}"/><Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/><Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/></Trigger>
             </Style.Triggers>
         </Style>
 
@@ -581,6 +605,18 @@
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                             <Button Style="{StaticResource FluentButtonStyle}" Click="RescanButton_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE72C;" Margin="0,0,7,0"/><TextBlock Text="Rescan"/></StackPanel></Button>
+                            <Button x:Name="MusicSortButton" Style="{StaticResource SortIconButtonStyle}" Content="&#xE8CB;" ToolTip="Sort music" Click="MusicSortButton_Click"/>
+                            <Popup x:Name="MusicSortPopup" PlacementTarget="{Binding ElementName=MusicSortButton}" Placement="Bottom" VerticalOffset="5" AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade">
+                                <Border Background="{DynamicResource SurfaceStrongBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="8" Padding="5" Effect="{StaticResource CardShadow}">
+                                    <StackPanel>
+                                        <TextBlock Text="Sort music" Style="{StaticResource MutedTextStyle}" FontWeight="SemiBold" Margin="9,5,9,4"/>
+                                        <Button x:Name="MusicSortAlphabeticalOption" Style="{StaticResource SortOptionButtonStyle}" CommandParameter="Alphabetical" Click="MusicSortOption_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE8CB;" Width="24"/><TextBlock Text="Alphabetical"/></StackPanel></Button>
+                                        <Button x:Name="MusicSortRecentOption" Style="{StaticResource SortOptionButtonStyle}" CommandParameter="RecentlyPlayed" Click="MusicSortOption_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE823;" Width="24"/><TextBlock Text="Recently Played"/></StackPanel></Button>
+                                        <Button x:Name="MusicSortDateAddedOption" Style="{StaticResource SortOptionButtonStyle}" CommandParameter="DateAdded" Click="MusicSortOption_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE787;" Width="24"/><TextBlock Text="Date Added"/></StackPanel></Button>
+                                        <Button x:Name="MusicSortDateModifiedOption" Style="{StaticResource SortOptionButtonStyle}" CommandParameter="DateModified" Click="MusicSortOption_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE895;" Width="24"/><TextBlock Text="Date Modified"/></StackPanel></Button>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
                         </StackPanel>
                     </Grid>
                     <Grid Grid.Row="1" Margin="0,14,22,12">
@@ -644,9 +680,22 @@
                             <TextBlock x:Name="RadioPageTitle" Text="Local FM" Style="{StaticResource PageTitleStyle}"/>
                             <TextBlock x:Name="RadioPageSubtitle" Text="Internet radio stations from your Windows region." Style="{StaticResource SecondaryTextStyle}" Margin="1,5,0,0" FontSize="13"/>
                         </StackPanel>
-                        <Button Grid.Column="1" Style="{StaticResource FluentButtonStyle}" Click="RefreshRadioButton_Click" VerticalAlignment="Center">
-                            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE72C;" Margin="0,0,7,0"/><TextBlock Text="Refresh stations"/></StackPanel>
-                        </Button>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Style="{StaticResource FluentButtonStyle}" Click="RefreshRadioButton_Click">
+                                <StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE72C;" Margin="0,0,7,0"/><TextBlock Text="Refresh stations"/></StackPanel>
+                            </Button>
+                            <Button x:Name="RadioSortButton" Style="{StaticResource SortIconButtonStyle}" Content="&#xE8CB;" ToolTip="Sort FM" Click="RadioSortButton_Click"/>
+                            <Popup x:Name="RadioSortPopup" PlacementTarget="{Binding ElementName=RadioSortButton}" Placement="Bottom" VerticalOffset="5" AllowsTransparency="True" StaysOpen="False" PopupAnimation="Fade">
+                                <Border Background="{DynamicResource SurfaceStrongBrush}" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1" CornerRadius="8" Padding="5" Effect="{StaticResource CardShadow}">
+                                    <StackPanel>
+                                        <TextBlock Text="Sort FM" Style="{StaticResource MutedTextStyle}" FontWeight="SemiBold" Margin="9,5,9,4"/>
+                                        <Button x:Name="RadioSortAlphabeticalOption" Style="{StaticResource SortOptionButtonStyle}" CommandParameter="Alphabetical" Click="RadioSortOption_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE8CB;" Width="24"/><TextBlock Text="Alphabetical"/></StackPanel></Button>
+                                        <Button x:Name="RadioSortRecentOption" Style="{StaticResource SortOptionButtonStyle}" CommandParameter="RecentlyPlayed" Click="RadioSortOption_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE823;" Width="24"/><TextBlock Text="Recently Played"/></StackPanel></Button>
+                                        <Button x:Name="RadioSortDateAddedOption" Style="{StaticResource SortOptionButtonStyle}" CommandParameter="DateAdded" Click="RadioSortOption_Click"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="{DynamicResource IconFont}" Text="&#xE787;" Width="24"/><TextBlock Text="Date Added"/></StackPanel></Button>
+                                    </StackPanel>
+                                </Border>
+                            </Popup>
+                        </StackPanel>
                     </Grid>
                     <Grid Grid.Row="1" Margin="0,14,22,12">
                         <TextBlock Text="Search station names, locations, languages, or genres from the top bar." Style="{StaticResource MutedTextStyle}" VerticalAlignment="Center"/>
@@ -821,14 +870,14 @@
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                             <Image Source="Assets/Chistara.png" Width="54" Height="54" Margin="0,0,14,0"/>
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                <TextBlock Text="Chistara 1.0.0" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
+                                                <TextBlock Text="Chistara 1.1.0" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
                                                 <TextBlock Text="Fluent music + worldwide FM for Windows 11" Style="{StaticResource SecondaryTextStyle}" Margin="0,2,0,0"/>
                                                 <TextBlock Text="Private by design: no accounts, ads or telemetry." Style="{StaticResource MutedTextStyle}" Margin="0,4,0,0"/>
                                             </StackPanel>
                                         </Grid>
                                         <Border Height="1" Background="{DynamicResource BorderBrush}" Margin="0,16,0,14"/>
                                         <StackPanel>
-                                            <TextBlock Text="Made by Mr KNIGHT" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="Made by KnightWin" Style="{StaticResource BodyTextStyle}" FontWeight="SemiBold"/>
                                             <TextBlock Text="This tool was made possible by AI" Style="{StaticResource SecondaryTextStyle}" Margin="0,4,0,0"/>
                                             <TextBlock Text="October 2026" Style="{StaticResource MutedTextStyle}" Margin="0,3,0,0"/>
                                         </StackPanel>

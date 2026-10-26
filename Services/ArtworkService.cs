@@ -21,7 +21,7 @@ public sealed class ArtworkService : IDisposable
             MaxAutomaticRedirections = 8
         };
         _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(22) };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Chistara/1.0.0 (Windows desktop music player; https://arena.ai)");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("Chistara/1.1.0 (Windows desktop music player; https://arena.ai)");
     }
 
     public static string? FindCachedArtwork(string artist, string album)

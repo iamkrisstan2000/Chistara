@@ -17,17 +17,19 @@
     <ApplicationIcon>Assets\Chistara.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>Chistara</AssemblyName>
+    <AssemblyTitle>Chistara</AssemblyTitle>
     <RootNamespace>Chistara</RootNamespace>
     <Product>Chistara</Product>
     <Description>A lightweight Fluent music player and worldwide FM radio for Windows 11.</Description>
-    <Company>Mr KNIGHT</Company>
-    <Authors>Mr KNIGHT</Authors>
-    <Copyright>Copyright © 2026 Mr KNIGHT</Copyright>
+    <Company>KnightWin</Company>
+    <Authors>KnightWin</Authors>
+    <Copyright>Copyright © 2026 KnightWin</Copyright>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
-    <Version>1.0.0</Version>
-    <FileVersion>1.0.0.0</FileVersion>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Version>1.1.0</Version>
+    <InformationalVersion>1.1.0</InformationalVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
